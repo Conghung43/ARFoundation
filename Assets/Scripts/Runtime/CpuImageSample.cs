@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine;
 using UnityEngine.UI;
@@ -22,6 +23,16 @@ namespace UnityEngine.XR.ARFoundation.Samples
     {
         Texture2D m_CameraTexture;
         XRCpuImage.Transformation m_Transformation = XRCpuImage.Transformation.MirrorY;
+
+        [SerializeField]
+        [Tooltip("Enable saving depth data to NPY files")]
+        bool m_SaveDepthData = false;
+
+        [SerializeField]
+        [Tooltip("Output directory for depth data files")]
+        string m_DepthDataOutputPath = "";
+
+        private int m_DepthFrameCount = 0;
 
         [SerializeField]
         [Tooltip("The ARCameraManager which will produce frame events.")]
@@ -116,6 +127,24 @@ namespace UnityEngine.XR.ARFoundation.Samples
             set => m_TransformationButton = value;
         }
 
+        /// <summary>
+        /// Enable or disable saving depth data to NPY files.
+        /// </summary>
+        public bool saveDepthData
+        {
+            get => m_SaveDepthData;
+            set => m_SaveDepthData = value;
+        }
+
+        /// <summary>
+        /// Set the output directory for depth data files.
+        /// </summary>
+        public string depthDataOutputPath
+        {
+            get => m_DepthDataOutputPath;
+            set => m_DepthDataOutputPath = value;
+        }
+
         delegate bool TryAcquireDepthImageDelegate(out XRCpuImage image);
 
         /// <summary>
@@ -158,10 +187,10 @@ namespace UnityEngine.XR.ARFoundation.Samples
         void OnCameraFrameReceived(ARCameraFrameEventArgs eventArgs)
         {
             UpdateCameraImage();
-            UpdateDepthImage(m_OcclusionManager.TryAcquireHumanDepthCpuImage, m_RawHumanDepthImage);
-            UpdateDepthImage(m_OcclusionManager.TryAcquireHumanStencilCpuImage, m_RawHumanStencilImage);
-            UpdateDepthImage(m_OcclusionManager.TryAcquireEnvironmentDepthCpuImage, m_RawEnvironmentDepthImage);
-            UpdateDepthImage(m_OcclusionManager.TryAcquireEnvironmentDepthConfidenceCpuImage, m_RawEnvironmentDepthConfidenceImage);
+            UpdateDepthImage(m_OcclusionManager.TryAcquireHumanDepthCpuImage, m_RawHumanDepthImage, "HumanDepth");
+            UpdateDepthImage(m_OcclusionManager.TryAcquireHumanStencilCpuImage, m_RawHumanStencilImage, "HumanStencil");
+            UpdateDepthImage(m_OcclusionManager.TryAcquireEnvironmentDepthCpuImage, m_RawEnvironmentDepthImage, "EnvironmentDepth");
+            UpdateDepthImage(m_OcclusionManager.TryAcquireEnvironmentDepthConfidenceCpuImage, m_RawEnvironmentDepthConfidenceImage, "EnvironmentDepthConfidence");
         }
 
         unsafe void UpdateCameraImage()
@@ -221,7 +250,8 @@ namespace UnityEngine.XR.ARFoundation.Samples
         /// </summary>
         /// <param name="tryAcquireDepthImageDelegate">The method to call to acquire a depth image.</param>
         /// <param name="rawImage">The Raw Image to use to render the depth image to the screen.</param>
-        void UpdateDepthImage(TryAcquireDepthImageDelegate tryAcquireDepthImageDelegate, RawImage rawImage)
+        /// <param name="depthType">The type of depth image (for file naming when saving).</param>
+        void UpdateDepthImage(TryAcquireDepthImageDelegate tryAcquireDepthImageDelegate, RawImage rawImage, string depthType = "")
         {
             if (tryAcquireDepthImageDelegate(out XRCpuImage cpuImage))
             {
@@ -230,6 +260,12 @@ namespace UnityEngine.XR.ARFoundation.Samples
                 using (cpuImage)
                 {
                     UpdateRawImage(rawImage, cpuImage, m_Transformation);
+                    
+                    // Save depth data if enabled
+                    if (m_SaveDepthData && !string.IsNullOrEmpty(m_DepthDataOutputPath))
+                    {
+                        SaveDepthData(cpuImage, depthType);
+                    }
                 }
             }
             else
@@ -271,6 +307,64 @@ namespace UnityEngine.XR.ARFoundation.Samples
 
             // Make sure it's enabled.
             rawImage.enabled = true;
+        }
+
+        /// <summary>
+        /// Saves depth data to an NPY file.
+        /// </summary>
+        void SaveDepthData(XRCpuImage depthImage, string depthType)
+        {
+            try
+            {
+                // Create output directory if it doesn't exist
+                if (!Directory.Exists(m_DepthDataOutputPath))
+                {
+                    Directory.CreateDirectory(m_DepthDataOutputPath);
+                }
+
+                string filename = $"{depthType}_{m_DepthFrameCount:D6}_{System.DateTime.Now:yyyy-MM-dd_HH-mm-ss-fff}.npy";
+                string filePath = Path.Combine(m_DepthDataOutputPath, filename);
+
+                // Get the plane data
+                var plane = depthImage.GetPlane(0);
+                int pixelCount = depthImage.width * depthImage.height;
+                int bytesPerPixel = plane.data.Length / pixelCount;
+                
+                byte[] rawData = new byte[plane.data.Length];
+                plane.data.CopyFrom(rawData);
+
+                if (bytesPerPixel == 4) // Float32
+                {
+                    float[] depthData = new float[pixelCount];
+                    System.Buffer.BlockCopy(rawData, 0, depthData, 0, rawData.Length);
+                    int[] shape = { depthImage.height, depthImage.width };
+                    NpyWriter.WriteFloat(filePath, depthData, shape);
+                }
+                else if (bytesPerPixel == 2) // UShort/Uint16
+                {
+                    ushort[] depthData = new ushort[pixelCount];
+                    System.Buffer.BlockCopy(rawData, 0, depthData, 0, rawData.Length);
+                    int[] shape = { depthImage.height, depthImage.width };
+                    NpyWriter.WriteUShort(filePath, depthData, shape);
+                }
+                else if (bytesPerPixel == 1) // Byte/Uint8
+                {
+                    int[] shape = { depthImage.height, depthImage.width };
+                    NpyWriter.WriteByte(filePath, rawData, shape);
+                }
+                else
+                {
+                    Debug.LogWarning($"Unsupported bytes per pixel: {bytesPerPixel}");
+                    return;
+                }
+
+                m_DepthFrameCount++;
+                Debug.Log($"Depth data saved to: {filePath}");
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"Error saving depth data: {ex.Message}\n{ex.StackTrace}");
+            }
         }
     }
 }

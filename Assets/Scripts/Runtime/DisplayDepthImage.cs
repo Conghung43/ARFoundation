@@ -1,7 +1,9 @@
 using System.Text;
+using System.IO;
 using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
+// using NativeGallery;
 
 namespace UnityEngine.XR.ARFoundation.Samples
 {
@@ -69,7 +71,7 @@ namespace UnityEngine.XR.ARFoundation.Samples
 
         /// <summary>
         /// The display rotation matrix for the shader.
-        /// </summary.
+        /// </summary>
         Matrix4x4 m_DisplayRotationMatrix = Matrix4x4.identity;
 
 #if UNITY_ANDROID
@@ -91,6 +93,8 @@ namespace UnityEngine.XR.ARFoundation.Samples
         [SerializeField]
         [Tooltip("The AROcclusionManager which will produce depth textures.")]
         AROcclusionManager m_OcclusionManager;
+
+        Button button;
 
         /// <summary>
         /// Get or set the <c>ARCameraManager</c>.
@@ -177,6 +181,19 @@ namespace UnityEngine.XR.ARFoundation.Samples
         [SerializeField]
         float m_MaxHumanDistance = 3.0f;
 
+        /// <summary>
+        /// Get or set the <c>saveTextureButton</c>.
+        /// </summary>
+        public Button saveTextureButton
+        {
+            get => m_SaveTextureButton;
+            set => m_SaveTextureButton = value;
+        }
+
+        [SerializeField]
+        [Tooltip("UI Button to save the currently displayed depth texture to a PNG.")]
+        Button m_SaveTextureButton;
+
         void Awake()
         {
 #if UNITY_ANDROID
@@ -192,19 +209,24 @@ namespace UnityEngine.XR.ARFoundation.Samples
             m_CameraManager.frameReceived += OnCameraFrameEventReceived;
             m_DisplayRotationMatrix = Matrix4x4.identity;
 
-            // When enabled, get the current screen orientation, and update the raw image UI.
+            // Hook up save button if assigned.
+            if (m_SaveTextureButton != null)
+                m_SaveTextureButton.onClick.AddListener(OnSaveTextureButtonClick);
+
             m_CurrentScreenOrientation = Screen.orientation;
             UpdateRawImage();
         }
 
         void OnDisable()
         {
-            // Unsubscribe from the camera frame received event, and initialize the display rotation matrix.
             m_DisplayRotationMatrix = Matrix4x4.identity;
             if (m_CameraManager != null)
                 m_CameraManager.frameReceived -= OnCameraFrameEventReceived;
-        }
 
+            if (m_SaveTextureButton != null)
+                m_SaveTextureButton.onClick.RemoveListener(OnSaveTextureButtonClick);
+        }
+        Texture2D displayTexture;
         void Update()
         {
             // If we are on a device that does supports neither human stencil, human depth, nor environment depth,
@@ -287,7 +309,7 @@ namespace UnityEngine.XR.ARFoundation.Samples
             LogText(m_StringBuilder.ToString());
 
             // Decide which to display based on the current mode.
-            Texture2D displayTexture;
+            
             switch (m_DisplayMode)
             {
                 case DisplayMode.HumanStencil:
@@ -462,6 +484,104 @@ namespace UnityEngine.XR.ARFoundation.Samples
 
             // Update the raw image following the mode change.
             UpdateRawImage();
+        }
+
+
+        /// <summary>
+        /// Handles the button click to save the material's texture to a file.
+        /// </summary>
+        public void OnSaveTextureButtonClick()
+        {
+            string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string fileName = $"DepthData_{m_DisplayMode}_{timestamp}.png";
+            string filePath = Path.Combine(Application.persistentDataPath, fileName);
+            // Save as CSV
+            string csvPath = Path.Combine(Application.persistentDataPath, "depth_data.bin");
+            ExportRawDepthDataToBinary(csvPath);
+
+            Debug.Log($"Depth texture saved to: {filePath}");
+        }
+
+        /// <summary>
+        /// Reads depth value from a depth texture at specific pixel coordinates.
+        /// AR Foundation stores depth as a single-channel float texture (RFloat format).
+        /// </summary>
+        /// <param name="depthTexture">The depth texture to read from.</param>
+        /// <param name="x">X pixel coordinate.</param>
+        /// <param name="y">Y pixel coordinate.</param>
+        /// <returns>The depth value in meters.</returns>
+        public static float ReadDepthValue(Texture2D depthTexture, int x, int y)
+        {
+            // Validate coordinates
+            if (x < 0 || x >= depthTexture.width || y < 0 || y >= depthTexture.height)
+            {
+                return -1f;
+            }
+
+            // AR Foundation's environment depth texture is typically in RFloat format
+            // which stores depth directly as a float value in meters
+            Color pixel = depthTexture.GetPixel(x, y);
+            
+            // For RFloat format, the depth is stored in the R channel
+            // No decoding needed - it's already in meters
+            return pixel.r;
+        }
+
+        /// <summary>
+        /// Exports raw depth data directly from the environment depth texture to a binary file.
+        /// </summary>
+        public void ExportRawDepthDataToBinary(string filePath)
+        {
+            Texture2D envDepth = m_OcclusionManager.environmentDepthTexture;
+
+            if (envDepth == null)
+            {
+                Debug.LogWarning("No environment depth texture available.");
+                return;
+            }
+
+            Debug.Log($"Depth texture format: {envDepth.format}, size: {envDepth.width}x{envDepth.height}");
+
+            // Create readable texture with the same format as source
+            RenderTexture renderTex = RenderTexture.GetTemporary(
+                envDepth.width,
+                envDepth.height,
+                0,
+                RenderTextureFormat.RFloat // Use RFloat to preserve depth precision
+            );
+
+            Graphics.Blit(envDepth, renderTex);
+
+            RenderTexture previous = RenderTexture.active;
+            RenderTexture.active = renderTex;
+
+            // Create texture with RFloat format to read depth values directly
+            Texture2D readable = new Texture2D(envDepth.width, envDepth.height, TextureFormat.RFloat, false);
+            readable.ReadPixels(new Rect(0, 0, envDepth.width, envDepth.height), 0, 0);
+            readable.Apply();
+
+            RenderTexture.active = previous;
+            RenderTexture.ReleaseTemporary(renderTex);
+
+            // Write depth data to binary file
+            using (BinaryWriter writer = new BinaryWriter(File.Open(filePath, FileMode.Create)))
+            {
+                writer.Write(readable.width);
+                writer.Write(readable.height);
+
+                for (int y = 0; y < readable.height; y++)
+                {
+                    for (int x = 0; x < readable.width; x++)
+                    {
+                        // Read depth value directly (already in meters for RFloat format)
+                        float depthMeters = ReadDepthValue(readable, x, y);
+                        writer.Write(depthMeters);
+                    }
+                }
+            }
+
+            Destroy(readable);
+            Debug.Log($"Raw depth data exported to binary file: {filePath}");
         }
     }
 }
