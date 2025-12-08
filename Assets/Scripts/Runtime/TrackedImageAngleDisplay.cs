@@ -146,7 +146,7 @@ namespace UnityEngine.XR.ARFoundation.Samples
             text.alignment = TextAnchor.MiddleCenter;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.verticalOverflow = VerticalWrapMode.Overflow;
-            text.text = "Angle: 0°\nDist: 0.00m\nPos: (0,0,0)";
+            text.text = "Angle: 0°\nDist: 0.00m";
 
             RectTransform textRect = textObj.GetComponent<RectTransform>();
             textRect.anchorMin = new Vector2(0, 0);
