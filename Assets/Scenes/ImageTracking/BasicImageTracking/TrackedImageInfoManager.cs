@@ -100,6 +100,7 @@ namespace UnityEngine.XR.ARFoundation.Samples
         {
             foreach (var trackedImage in eventArgs.added)
             {
+                AddCornerSpheres(trackedImage.transform);
                 // Give the initial image a reasonable default scale
                 trackedImage.transform.localScale = new Vector3(0.01f, 1f, 0.01f);
 
@@ -108,6 +109,36 @@ namespace UnityEngine.XR.ARFoundation.Samples
 
             foreach (var trackedImage in eventArgs.updated)
                 UpdateInfo(trackedImage);
+        }
+
+        public void AddCornerSpheres(Transform transform)
+        {
+            var halfSizeX = transform.localScale.x * 0.5f;
+            var halfSizeY = transform.localScale.y * 0.5f;
+            var corners = new Vector3[]
+            {
+                new Vector3(-halfSizeX, 0, -halfSizeY),
+                new Vector3(halfSizeX, 0, -halfSizeY),
+                new Vector3(-halfSizeX, 0, halfSizeY),
+                new Vector3(halfSizeX, 0, halfSizeY)
+            };
+
+            foreach (var corner in corners)
+            {
+                var worldCornerPos = transform.TransformPoint(corner);
+                var screenPoint = Camera.main.WorldToScreenPoint(worldCornerPos);
+                bool isOnScreen = screenPoint.z > 0 &&
+                                  screenPoint.x > 0 && screenPoint.x < Screen.width &&
+                                  screenPoint.y > 0 && screenPoint.y < Screen.height;
+
+                if (isOnScreen)
+                {
+                    var sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    sphere.transform.SetParent(transform, false);
+                    sphere.transform.localPosition = corner;
+                    sphere.transform.localScale = Vector3.one * 0.03f;
+                }
+            }
         }
     }
 }
