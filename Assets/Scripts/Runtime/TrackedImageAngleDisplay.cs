@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
@@ -34,6 +35,23 @@ namespace UnityEngine.XR.ARFoundation.Samples
 
         ARTrackedImageManager m_TrackedImageManager;
         System.Collections.Generic.Dictionary<TrackableId, Text> m_AngleTexts = new System.Collections.Generic.Dictionary<TrackableId, Text>();
+
+                [SerializeField]
+        [Tooltip("If not null, instantiates this prefab for each detected image.")]
+        GameObject m_OriginTransformPrefab;
+
+        /// <summary>
+        /// If not null, instantiates this Prefab for each detected image.
+        /// </summary>
+        /// <remarks>
+        /// The purpose of this property is to extend the functionality of <see cref="ARTrackedImage"/>s.
+        /// It is not the recommended way to instantiate content associated with an <see cref="ARTrackedImage"/>.
+        /// </remarks>
+        public GameObject originTransformPrefab
+        {
+            get => m_OriginTransformPrefab;
+            set => m_OriginTransformPrefab = value;
+        }
 
         void Awake()
         {
@@ -99,6 +117,26 @@ namespace UnityEngine.XR.ARFoundation.Samples
                 {
                     CreateAngleTextForImage(trackedImage);
                 }
+                AddCornerSpheres(trackedImage.transform);
+                // Instantiate OriginTransform prefab if set
+                if (m_OriginTransformPrefab != null)
+                {
+                    // Note: this gameObject will not be a child of the tracked image
+                    var originTransform = Instantiate(m_OriginTransformPrefab);
+                    originTransform.transform.localPosition = Vector3.zero;
+                    originTransform.transform.localRotation = Quaternion.identity;
+                    originTransform.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);// Adjust scale if necessary
+                    m_InstantiatedOriginTransforms[trackedImage.trackableId] = originTransform;
+                }
+            }
+
+            foreach (var trackedImage in eventArgs.updated)
+            {
+                if (AreAllCornersInsideScreen(trackedImage.transform) && IsCameraLookingAtImage(trackedImage.transform))
+                {
+                    m_InstantiatedOriginTransforms[trackedImage.trackableId].transform.localPosition = trackedImage.transform.position;
+                    m_InstantiatedOriginTransforms[trackedImage.trackableId].transform.localRotation = trackedImage.transform.rotation;
+                }
             }
 
             // Handle removed images
@@ -111,6 +149,12 @@ namespace UnityEngine.XR.ARFoundation.Samples
                         Destroy(text.gameObject);
                     }
                     m_AngleTexts.Remove(trackedImagePair.Key);
+                }
+                if (m_InstantiatedOriginTransforms.TryGetValue(trackedImagePair.Value.trackableId, out var originTransform))
+                {
+                    if (originTransform != null)
+                        Destroy(originTransform);
+                    m_InstantiatedOriginTransforms.Remove(trackedImagePair.Value.trackableId);
                 }
             }
         }
@@ -206,5 +250,86 @@ namespace UnityEngine.XR.ARFoundation.Samples
         {
             return CalculateAngle(trackedImage);
         }
+
+        Vector3[] GetImageCorners(Transform transform)
+        {
+            var halfSizeX = transform.localScale.x * 0.5f;
+            var halfSizeY = transform.localScale.y * 0.5f;
+            return new Vector3[]
+            {
+                new Vector3(-halfSizeX, 0, -halfSizeY),
+                new Vector3(halfSizeX, 0, -halfSizeY),
+                new Vector3(-halfSizeX, 0, halfSizeY),
+                new Vector3(halfSizeX, 0, halfSizeY)
+            };
+        }
+
+        bool IsCornerOnScreen(Transform transform, Vector3 localCorner)
+        {
+            var worldCornerPos = transform.TransformPoint(localCorner);
+            var screenPoint = Camera.main.WorldToScreenPoint(worldCornerPos);
+            return screenPoint.z > 0 &&
+                   screenPoint.x > 0 && screenPoint.x < Screen.width &&
+                   screenPoint.y > 0 && screenPoint.y < Screen.height;
+        }
+
+        bool IsCameraLookingAtImage(Transform transform)
+        {
+            if (Camera.main == null)
+                return false;
+
+            // Get the image center position
+            var imageCenterWorldPos = transform.position;
+
+            // Get the vector from camera to image center
+            var directionToImage = (imageCenterWorldPos - Camera.main.transform.position).normalized;
+
+            // Get the camera's forward direction
+            var cameraForward = Camera.main.transform.forward;
+
+            // Calculate the angle between camera forward and direction to image
+            float dotProduct = Vector3.Dot(cameraForward, directionToImage);
+
+            // Get half of the camera's field of view in radians
+            float halfFOV = Camera.main.fieldOfView * 0.5f * Mathf.Deg2Rad;
+
+            // Check if the angle is within the camera's field of view
+            float angleToImage = Mathf.Acos(Mathf.Clamp(dotProduct, -1f, 1f));
+
+            return angleToImage <= halfFOV;
+        }
+
+        bool AreAllCornersInsideScreen(Transform transform)
+        {
+            var corners = GetImageCorners(transform);
+
+            foreach (var corner in corners)
+            {
+                if (!IsCornerOnScreen(transform, corner))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public void AddCornerSpheres(Transform transform)
+        {
+            var corners = GetImageCorners(transform);
+
+            foreach (var corner in corners)
+            {
+                if (true)//(IsCornerOnScreen(transform, corner))
+                {
+                    var sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    sphere.transform.SetParent(transform, false);
+                    sphere.transform.localPosition = corner;
+                    sphere.transform.localScale = Vector3.one * 0.03f;
+                }
+            }
+        }
+
+        public Dictionary<TrackableId, GameObject> m_InstantiatedOriginTransforms = new Dictionary<TrackableId, GameObject>();
     }
 }

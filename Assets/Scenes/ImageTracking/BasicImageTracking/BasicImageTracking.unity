@@ -652,8 +652,6 @@ MonoBehaviour:
   m_MaxNumberOfMovingImages: 0
   m_TrackedImagePrefab: {fileID: 3312728602301253215, guid: 5d81b097707c58e4b949537763ba4bbe,
     type: 3}
-  m_OriginTransformPrefab: {fileID: 3125165527598978782, guid: 78be84f5d3a3c41f9ab0093b3f712a4e,
-    type: 3}
 --- !u!114 &1557103660
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -671,6 +669,8 @@ MonoBehaviour:
   m_ShowIndividualAngles: 1
   m_FontSize: 24
   m_TextColor: {r: 1, g: 1, b: 1, a: 1}
+  m_OriginTransformPrefab: {fileID: 3125165527598978782, guid: 78be84f5d3a3c41f9ab0093b3f712a4e,
+    type: 3}
 --- !u!1 &2017973560
 GameObject:
   m_ObjectHideFlags: 0
