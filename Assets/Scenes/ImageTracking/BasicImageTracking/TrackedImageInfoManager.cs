@@ -100,6 +100,7 @@ namespace UnityEngine.XR.ARFoundation.Samples
         {
             foreach (var trackedImage in eventArgs.added)
             {
+                Debug.Log("Added tracked image: " + trackedImage.referenceImage.name);
                 AddCornerSpheres(trackedImage.transform);
                 // Give the initial image a reasonable default scale
                 trackedImage.transform.localScale = new Vector3(0.01f, 1f, 0.01f);
@@ -110,15 +111,15 @@ namespace UnityEngine.XR.ARFoundation.Samples
             foreach (var trackedImage in eventArgs.updated)
             {
                 // Check if all 4 corners are inside screen bounds before updating
-                if (AreAllCornersInsideScreen(trackedImage.transform))
+                if (AreAllCornersInsideScreen(trackedImage.transform) && IsCameraLookingAtImage(trackedImage.transform))
                 {
+                    Debug.Log("Updated tracked image: ");
                     UpdateInfo(trackedImage);
                 }
                 else
                 {
-                    Debug.Log("Tracked image is partially outside screen bounds; info not updated.");
+                    Debug.Log("Updated tracked image Skipped updating tracked image info - corners out of screen bounds or camera not looking at image.");
                 }
-                
             }
         }
 
@@ -142,6 +143,32 @@ namespace UnityEngine.XR.ARFoundation.Samples
             return screenPoint.z > 0 &&
                    screenPoint.x > 0 && screenPoint.x < Screen.width &&
                    screenPoint.y > 0 && screenPoint.y < Screen.height;
+        }
+
+        bool IsCameraLookingAtImage(Transform transform)
+        {
+            if (Camera.main == null)
+                return false;
+
+            // Get the image center position
+            var imageCenterWorldPos = transform.position;
+
+            // Get the vector from camera to image center
+            var directionToImage = (imageCenterWorldPos - Camera.main.transform.position).normalized;
+
+            // Get the camera's forward direction
+            var cameraForward = Camera.main.transform.forward;
+
+            // Calculate the angle between camera forward and direction to image
+            float dotProduct = Vector3.Dot(cameraForward, directionToImage);
+
+            // Get half of the camera's field of view in radians
+            float halfFOV = Camera.main.fieldOfView * 0.5f * Mathf.Deg2Rad;
+
+            // Check if the angle is within the camera's field of view
+            float angleToImage = Mathf.Acos(Mathf.Clamp(dotProduct, -1f, 1f));
+
+            return angleToImage <= halfFOV;
         }
 
         bool AreAllCornersInsideScreen(Transform transform)
