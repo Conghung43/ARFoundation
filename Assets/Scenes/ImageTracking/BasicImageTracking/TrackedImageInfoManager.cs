@@ -108,30 +108,64 @@ namespace UnityEngine.XR.ARFoundation.Samples
             }
 
             foreach (var trackedImage in eventArgs.updated)
-                UpdateInfo(trackedImage);
+            {
+                // Check if all 4 corners are inside screen bounds before updating
+                if (AreAllCornersInsideScreen(trackedImage.transform))
+                {
+                    UpdateInfo(trackedImage);
+                }
+                else
+                {
+                    Debug.Log("Tracked image is partially outside screen bounds; info not updated.");
+                }
+                
+            }
         }
 
-        public void AddCornerSpheres(Transform transform)
+        Vector3[] GetImageCorners(Transform transform)
         {
             var halfSizeX = transform.localScale.x * 0.5f;
             var halfSizeY = transform.localScale.y * 0.5f;
-            var corners = new Vector3[]
+            return new Vector3[]
             {
                 new Vector3(-halfSizeX, 0, -halfSizeY),
                 new Vector3(halfSizeX, 0, -halfSizeY),
                 new Vector3(-halfSizeX, 0, halfSizeY),
                 new Vector3(halfSizeX, 0, halfSizeY)
             };
+        }
+
+        bool IsCornerOnScreen(Transform transform, Vector3 localCorner)
+        {
+            var worldCornerPos = transform.TransformPoint(localCorner);
+            var screenPoint = Camera.main.WorldToScreenPoint(worldCornerPos);
+            return screenPoint.z > 0 &&
+                   screenPoint.x > 0 && screenPoint.x < Screen.width &&
+                   screenPoint.y > 0 && screenPoint.y < Screen.height;
+        }
+
+        bool AreAllCornersInsideScreen(Transform transform)
+        {
+            var corners = GetImageCorners(transform);
 
             foreach (var corner in corners)
             {
-                var worldCornerPos = transform.TransformPoint(corner);
-                var screenPoint = Camera.main.WorldToScreenPoint(worldCornerPos);
-                bool isOnScreen = screenPoint.z > 0 &&
-                                  screenPoint.x > 0 && screenPoint.x < Screen.width &&
-                                  screenPoint.y > 0 && screenPoint.y < Screen.height;
+                if (!IsCornerOnScreen(transform, corner))
+                {
+                    return false;
+                }
+            }
 
-                if (isOnScreen)
+            return true;
+        }
+
+        public void AddCornerSpheres(Transform transform)
+        {
+            var corners = GetImageCorners(transform);
+
+            foreach (var corner in corners)
+            {
+                if (true)//(IsCornerOnScreen(transform, corner))
                 {
                     var sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                     sphere.transform.SetParent(transform, false);
