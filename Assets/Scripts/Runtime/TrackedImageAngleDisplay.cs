@@ -253,7 +253,7 @@ namespace UnityEngine.XR.ARFoundation.Samples
 
         Vector3[] GetImageCorners(Transform transform)
         {
-            var halfSizeX = transform.localScale.x * 0.5f;
+            var halfSizeX = 0.5f;//transform.localScale.x * 0.5f;
             var halfSizeY = transform.localScale.y * 0.5f;
             return new Vector3[]
             {
