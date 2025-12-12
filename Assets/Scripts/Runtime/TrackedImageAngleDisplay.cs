@@ -253,8 +253,9 @@ namespace UnityEngine.XR.ARFoundation.Samples
 
         Vector3[] GetImageCorners(Transform transform)
         {
+            // because the tracked image size is 1x1 in local space
             var halfSizeX = 0.5f;//transform.localScale.x * 0.5f;
-            var halfSizeY = transform.localScale.y * 0.5f;
+            var halfSizeY = 0.5f;//transform.localScale.y * 0.5f;
             return new Vector3[]
             {
                 new Vector3(-halfSizeX, 0, -halfSizeY),
