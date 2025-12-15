@@ -33,6 +33,14 @@ namespace UnityEngine.XR.ARFoundation.Samples
         private float m_DistanceCoefficient = 3.90625f;
         private float m_DistanceOffset = 0.246875f;
         
+        [SerializeField]
+        [Tooltip("Number of recent poses to average for smoothing.")]
+        int m_PoseSmoothingWindow = 10;
+        
+        // Per-image pose history for smoothing
+        Dictionary<TrackableId, Queue<Vector3>> m_PositionHistory = new Dictionary<TrackableId, Queue<Vector3>>();
+        Dictionary<TrackableId, Queue<Quaternion>> m_RotationHistory = new Dictionary<TrackableId, Queue<Quaternion>>();
+        
 
         [SerializeField]
         [Tooltip("Color for the angle text.")]
@@ -147,8 +155,17 @@ namespace UnityEngine.XR.ARFoundation.Samples
                     distance < (m_DistanceCoefficient * trackedImage.size.x - m_DistanceOffset)
                     )
                 {
-                    m_InstantiatedOriginTransforms[trackedImage.trackableId].transform.localPosition = trackedImage.transform.position;
-                    m_InstantiatedOriginTransforms[trackedImage.trackableId].transform.localRotation = trackedImage.transform.rotation;
+                    // Update smoothing buffers
+                    AddPoseSample(trackedImage.trackableId, trackedImage.transform.position, trackedImage.transform.rotation);
+
+                    // Apply smoothed pose if we have an instantiated origin transform
+                    if (m_InstantiatedOriginTransforms.TryGetValue(trackedImage.trackableId, out var originTransform) && originTransform != null)
+                    {
+                        var smoothedPosition = GetAveragePosition(m_PositionHistory[trackedImage.trackableId]);
+                        var smoothedRotation = GetAverageRotation(m_RotationHistory[trackedImage.trackableId]);
+                        originTransform.transform.localPosition = smoothedPosition;
+                        originTransform.transform.localRotation = smoothedRotation;
+                    }
                 }
             }
 
@@ -169,7 +186,75 @@ namespace UnityEngine.XR.ARFoundation.Samples
                         Destroy(originTransform);
                     m_InstantiatedOriginTransforms.Remove(trackedImagePair.Value.trackableId);
                 }
+                // Clear pose history
+                m_PositionHistory.Remove(trackedImagePair.Value.trackableId);
+                m_RotationHistory.Remove(trackedImagePair.Value.trackableId);
             }
+        }
+
+        void AddPoseSample(TrackableId id, Vector3 position, Quaternion rotation)
+        {
+            if (!m_PositionHistory.TryGetValue(id, out var posQueue))
+            {
+                posQueue = new Queue<Vector3>(m_PoseSmoothingWindow);
+                m_PositionHistory[id] = posQueue;
+            }
+            if (!m_RotationHistory.TryGetValue(id, out var rotQueue))
+            {
+                rotQueue = new Queue<Quaternion>(m_PoseSmoothingWindow);
+                m_RotationHistory[id] = rotQueue;
+            }
+
+            if (posQueue.Count >= m_PoseSmoothingWindow)
+                posQueue.Dequeue();
+            if (rotQueue.Count >= m_PoseSmoothingWindow)
+                rotQueue.Dequeue();
+
+            posQueue.Enqueue(position);
+            rotQueue.Enqueue(rotation);
+        }
+
+        Vector3 GetAveragePosition(Queue<Vector3> positions)
+        {
+            if (positions == null || positions.Count == 0)
+                return Vector3.zero;
+            Vector3 sum = Vector3.zero;
+            foreach (var p in positions)
+                sum += p;
+            return sum / positions.Count;
+        }
+
+        Quaternion GetAverageRotation(Queue<Quaternion> rotations)
+        {
+            if (rotations == null || rotations.Count == 0)
+                return Quaternion.identity;
+
+            Quaternion first = default;
+            bool hasFirst = false;
+            float x = 0f, y = 0f, z = 0f, w = 0f;
+
+            foreach (var q in rotations)
+            {
+                var qn = q;
+                if (!hasFirst)
+                {
+                    first = qn;
+                    hasFirst = true;
+                }
+                // Ensure same hemisphere to avoid cancellation
+                if (Quaternion.Dot(qn, first) < 0f)
+                {
+                    qn.x = -qn.x; qn.y = -qn.y; qn.z = -qn.z; qn.w = -qn.w;
+                }
+                x += qn.x; y += qn.y; z += qn.z; w += qn.w;
+            }
+
+            float mag = Mathf.Sqrt(x * x + y * y + z * z + w * w);
+            if (mag > 1e-6f)
+            {
+                x /= mag; y /= mag; z /= mag; w /= mag;
+            }
+            return new Quaternion(x, y, z, w);
         }
 
         void CreateAngleTextForImage(ARTrackedImage trackedImage)
