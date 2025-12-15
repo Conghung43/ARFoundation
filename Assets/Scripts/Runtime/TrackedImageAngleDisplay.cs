@@ -28,6 +28,11 @@ namespace UnityEngine.XR.ARFoundation.Samples
         [SerializeField]
         [Tooltip("Font size for individual angle displays.")]
         int m_FontSize = 24;
+        private float m_updatedImageTargetAngleThreshold = 25f;
+        // Trackable distance y = 3.90625x  - 0.246875; with x is image size in meters
+        private float m_DistanceCoefficient = 3.90625f;
+        private float m_DistanceOffset = 0.246875f;
+        
 
         [SerializeField]
         [Tooltip("Color for the angle text.")]
@@ -74,6 +79,9 @@ namespace UnityEngine.XR.ARFoundation.Samples
             m_TrackedImageManager.trackablesChanged.RemoveListener(OnTrackedImagesChanged);
         }
 
+        float angle = 90f;
+        float distance = 10f;
+
         void Update()
         {
             if (m_Camera == null)
@@ -84,8 +92,8 @@ namespace UnityEngine.XR.ARFoundation.Samples
             {
                 if (trackedImage.trackingState == UnityEngine.XR.ARSubsystems.TrackingState.Tracking)
                 {
-                    float angle = CalculateAngle(trackedImage);
-                    float distance = Vector3.Distance(m_Camera.transform.position, trackedImage.transform.position);
+                    angle = CalculateAngle(trackedImage);
+                    distance = Vector3.Distance(m_Camera.transform.position, trackedImage.transform.position);
                     
                     // Update individual text if it exists
                     if (m_AngleTexts.TryGetValue(trackedImage.trackableId, out var text))
@@ -132,7 +140,12 @@ namespace UnityEngine.XR.ARFoundation.Samples
 
             foreach (var trackedImage in eventArgs.updated)
             {
-                if (AreAllCornersInsideScreen(trackedImage.transform) && IsCameraLookingAtImage(trackedImage.transform))
+                // Set condition to update origin transform here
+                if (AreAllCornersInsideScreen(trackedImage.transform) && 
+                    IsCameraLookingAtImage(trackedImage.transform) &&
+                    angle < m_updatedImageTargetAngleThreshold &&
+                    distance < (m_DistanceCoefficient * trackedImage.size.x - m_DistanceOffset)
+                    )
                 {
                     m_InstantiatedOriginTransforms[trackedImage.trackableId].transform.localPosition = trackedImage.transform.position;
                     m_InstantiatedOriginTransforms[trackedImage.trackableId].transform.localRotation = trackedImage.transform.rotation;
