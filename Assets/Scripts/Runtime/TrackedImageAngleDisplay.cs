@@ -37,9 +37,22 @@ namespace UnityEngine.XR.ARFoundation.Samples
         [Tooltip("Number of recent poses to average for smoothing.")]
         int m_PoseSmoothingWindow = 10;
         
+        [SerializeField]
+        [Tooltip("Maximum distance (meters) from average to consider normal.")]
+        float m_MaxPositionDeviation = 0.1f;
+        
+        [SerializeField]
+        [Tooltip("Maximum rotation deviation (degrees) from average to consider normal.")]
+        float m_MaxRotationDeviation = 15f;
+        
+        [SerializeField]
+        [Tooltip("Number of consecutive abnormal samples before accepting as legitimate position change.")]
+        int m_AbnormalThreshold = 5;
+        
         // Per-image pose history for smoothing
         Dictionary<TrackableId, Queue<Vector3>> m_PositionHistory = new Dictionary<TrackableId, Queue<Vector3>>();
         Dictionary<TrackableId, Queue<Quaternion>> m_RotationHistory = new Dictionary<TrackableId, Queue<Quaternion>>();
+        Dictionary<TrackableId, int> m_AbnormalCount = new Dictionary<TrackableId, int>();
         
 
         [SerializeField]
@@ -155,16 +168,45 @@ namespace UnityEngine.XR.ARFoundation.Samples
                     distance < (m_DistanceCoefficient * trackedImage.size.x - m_DistanceOffset)
                     )
                 {
-                    // Update smoothing buffers
-                    AddPoseSample(trackedImage.trackableId, trackedImage.transform.position, trackedImage.transform.rotation);
-
-                    // Apply smoothed pose if we have an instantiated origin transform
-                    if (m_InstantiatedOriginTransforms.TryGetValue(trackedImage.trackableId, out var originTransform) && originTransform != null)
+                    // Detect abnormal samples and skip if needed
+                    bool isAbnormal = IsAbnormalPoseSample(trackedImage.trackableId, trackedImage.transform.position, trackedImage.transform.rotation);
+                    
+                    if (isAbnormal)
                     {
-                        var smoothedPosition = GetAveragePosition(m_PositionHistory[trackedImage.trackableId]);
-                        var smoothedRotation = GetAverageRotation(m_RotationHistory[trackedImage.trackableId]);
-                        originTransform.transform.localPosition = smoothedPosition;
-                        originTransform.transform.localRotation = smoothedRotation;
+                        // Increment abnormal counter
+                        if (!m_AbnormalCount.ContainsKey(trackedImage.trackableId))
+                            m_AbnormalCount[trackedImage.trackableId] = 0;
+                        m_AbnormalCount[trackedImage.trackableId]++;
+                        
+                        // If abnormal count exceeds threshold, object has legitimately moved
+                        if (m_AbnormalCount[trackedImage.trackableId] >= m_AbnormalThreshold)
+                        {
+                            // Clear old history and start fresh with new position
+                            m_PositionHistory[trackedImage.trackableId].Clear();
+                            m_RotationHistory[trackedImage.trackableId].Clear();
+                            m_AbnormalCount[trackedImage.trackableId] = 0;
+                            
+                            // Add new sample as baseline
+                            AddPoseSample(trackedImage.trackableId, trackedImage.transform.position, trackedImage.transform.rotation);
+                        }
+                        // else: skip this frame, continue counting abnormals
+                    }
+                    else
+                    {
+                        // Reset abnormal counter on normal sample
+                        m_AbnormalCount[trackedImage.trackableId] = 0;
+                        
+                        // Update smoothing buffers
+                        AddPoseSample(trackedImage.trackableId, trackedImage.transform.position, trackedImage.transform.rotation);
+
+                        // Apply smoothed pose if we have an instantiated origin transform
+                        if (m_InstantiatedOriginTransforms.TryGetValue(trackedImage.trackableId, out var originTransform) && originTransform != null)
+                        {
+                            var smoothedPosition = GetAveragePosition(m_PositionHistory[trackedImage.trackableId]);
+                            var smoothedRotation = GetAverageRotation(m_RotationHistory[trackedImage.trackableId]);
+                            originTransform.transform.localPosition = smoothedPosition;
+                            originTransform.transform.localRotation = smoothedRotation;
+                        }
                     }
                 }
             }
@@ -189,6 +231,7 @@ namespace UnityEngine.XR.ARFoundation.Samples
                 // Clear pose history
                 m_PositionHistory.Remove(trackedImagePair.Value.trackableId);
                 m_RotationHistory.Remove(trackedImagePair.Value.trackableId);
+                m_AbnormalCount.Remove(trackedImagePair.Value.trackableId);
             }
         }
 
@@ -255,6 +298,77 @@ namespace UnityEngine.XR.ARFoundation.Samples
                 x /= mag; y /= mag; z /= mag; w /= mag;
             }
             return new Quaternion(x, y, z, w);
+        }
+
+        /// <summary>
+        /// Detects if a new pose sample is an outlier compared to recent history.
+        /// Returns true if the sample is abnormal (should be rejected or handled specially).
+        /// </summary>
+        bool IsAbnormalPoseSample(TrackableId id, Vector3 newPosition, Quaternion newRotation)
+        {
+            // Need at least 3 samples to detect anomalies
+            if (!m_PositionHistory.TryGetValue(id, out var posHistory) || posHistory.Count < 3)
+                return false;
+            if (!m_RotationHistory.TryGetValue(id, out var rotHistory) || rotHistory.Count < 3)
+                return false;
+
+            Vector3 avgPos = GetAveragePosition(posHistory);
+            Quaternion avgRot = GetAverageRotation(rotHistory);
+
+            // Method 1: Distance from running average
+            float positionDeviation = Vector3.Distance(newPosition, avgPos);
+            if (positionDeviation > m_MaxPositionDeviation)
+                return true;
+
+            // Method 2: Angular deviation from running average
+            float rotationDeviation = Quaternion.Angle(newRotation, avgRot);
+            if (rotationDeviation > m_MaxRotationDeviation)
+                return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Advanced outlier detection using standard deviation.
+        /// Returns true if sample is beyond N sigma from mean.
+        /// </summary>
+        bool IsOutlierByStdDev(TrackableId id, Vector3 newPosition, float sigmaThreshold = 2f)
+        {
+            if (!m_PositionHistory.TryGetValue(id, out var posHistory) || posHistory.Count < 2)
+                return false;
+
+            Vector3 mean = GetAveragePosition(posHistory);
+            
+            // Calculate standard deviation
+            float sumSquaredDist = 0f;
+            foreach (var p in posHistory)
+            {
+                float dist = Vector3.Distance(p, mean);
+                sumSquaredDist += dist * dist;
+            }
+            float stdDev = Mathf.Sqrt(sumSquaredDist / posHistory.Count);
+            
+            // If std dev is very small, treat it as stable (no noise)
+            if (stdDev < 0.001f)
+                return false;
+
+            // Check if new sample is beyond threshold
+            float deviationFromMean = Vector3.Distance(newPosition, mean);
+            return deviationFromMean > (sigmaThreshold * stdDev);
+        }
+
+        /// <summary>
+        /// Velocity-based detection: flags sudden jumps between consecutive frames.
+        /// </summary>
+        bool IsAbnormalVelocity(TrackableId id, Vector3 newPosition, float maxVelocity = 0.5f)
+        {
+            if (!m_PositionHistory.TryGetValue(id, out var posHistory) || posHistory.Count == 0)
+                return false;
+
+            Vector3 lastPos = ((Queue<Vector3>)posHistory).ToArray()[posHistory.Count - 1];
+            float velocity = Vector3.Distance(newPosition, lastPos);
+            
+            return velocity > maxVelocity;
         }
 
         void CreateAngleTextForImage(ARTrackedImage trackedImage)
