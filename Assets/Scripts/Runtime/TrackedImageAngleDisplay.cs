@@ -163,7 +163,7 @@ namespace UnityEngine.XR.ARFoundation.Samples
             {
                 // Set condition to update origin transform here
                 if (AreAllCornersInsideScreen(trackedImage.transform) && 
-                    IsCameraLookingAtImage(trackedImage.transform) &&
+                    IsCameraLookingAtImage(trackedImage.transform) && //optional: ensure camera is facing image
                     angle < m_updatedImageTargetAngleThreshold &&
                     distance < (m_DistanceCoefficient * trackedImage.size.x - m_DistanceOffset)
                     )
